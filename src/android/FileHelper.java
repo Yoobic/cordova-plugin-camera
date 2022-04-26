@@ -31,6 +31,7 @@ import org.apache.cordova.CordovaInterface;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Locale;
@@ -49,7 +50,21 @@ public class FileHelper {
      */
     @SuppressWarnings("deprecation")
     public static String getRealPath(Uri uri, CordovaInterface cordova) {
-        return FileHelper.getRealPathFromURI(cordova.getActivity(), uri);
+      String realPath = null;
+
+      if (Build.VERSION.SDK_INT >= 29)
+      {
+        try {
+          realPath = FileHelper.getRealPathFromURI_API29_And_Above(cordova.getActivity(), uri);
+        } catch (Exception e) {
+          realPath = FileHelper.getRealPathFromURI(cordova.getActivity(), uri);
+        }
+      }
+      else
+      {
+        realPath = FileHelper.getRealPathFromURI(cordova.getActivity(), uri);
+      }
+      return realPath;
     }
 
     /**
@@ -261,6 +276,13 @@ public class FileHelper {
                 final int column_index = cursor.getColumnIndexOrThrow(column);
                 return cursor.getString(column_index);
             }
+        } catch (SecurityException e){
+          // https://stackoverflow.com/questions/54587884/java-lang-securityexception-permission-denial-opening-provider-com-estrongs-an
+          if (uri.toString().contains("/storage/emulated/0")) {
+            return "/storage/emulated/0" + uri.toString().split("/storage/emulated/0")[1];
+          } else {
+            return null;
+          }
         } catch (Exception e) {
             return null;
         } finally {
@@ -326,6 +348,82 @@ public class FileHelper {
         final File appDir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES);
         final File file = new File(appDir, uri.getLastPathSegment());
         return file.exists() ? file.toString(): null;
+    }
+
+    public static String getRealPathFromURI_API29_And_Above(final Context context, final Uri uri) throws IOException {
+        if ("content".equalsIgnoreCase(uri.getScheme())) {
+        // Return the remote address
+        if (isGooglePhotosUri(uri))
+            return uri.getLastPathSegment();
+        return getDataColumnWithCopyFallback(context, uri, null, null);
+        }
+        // File
+        else if ("file".equalsIgnoreCase(uri.getScheme())) {
+        return uri.getPath();
+        }
+
+        return null;
+    }
+
+    public static String getDataColumnWithCopyFallback(Context context, Uri uri, String selection,
+                                                        String[] selectionArgs) throws IOException {
+
+        Cursor cursor = null;
+        final String[] projection = {
+        MediaStore.MediaColumns.DATA,
+        MediaStore.MediaColumns.DISPLAY_NAME,
+        MediaStore.MediaColumns.SIZE,
+        };
+
+        try {
+        cursor = context.getContentResolver().query(uri, projection, selection, selectionArgs,null);
+        if (cursor != null && cursor.moveToFirst()) {
+            // Fall back to writing to file if _data column does not exist
+            final int index = cursor.getColumnIndex(MediaStore.MediaColumns.DATA);
+            String path = index > -1 ? cursor.getString(index) : null;
+            if (path != null) {
+            return cursor.getString(index);
+            } else {
+            final int indexDisplayName = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME);
+            final int indexSize = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE);
+            long fileSize = cursor.getLong(indexSize);
+            if (fileSize > 2 * 1024 * 1024 * 1024L){
+                // copy file is a heavy operation. limit file size here to ensure performance and avoid OOM.
+                throw new IOException("SELECTED_FILE_TOO_LARGE");
+            }
+            String fileName = cursor.getString(indexDisplayName);
+            File fileWritten = writeToFile(context, fileName, uri);
+            return fileWritten.getAbsolutePath();
+            }
+        }
+        } finally {
+        if (cursor != null)
+            cursor.close();
+        }
+        return null;
+    }
+
+    public static File writeToFile(Context context, String fileName, Uri uri) {
+        String tmpDir = context.getCacheDir() + "/cordova-plugin-camera";
+        Boolean created = new File(tmpDir).mkdir();
+        fileName = fileName.substring(fileName.lastIndexOf('/') + 1);
+        File path = new File(tmpDir);
+        File file = new File(path, fileName);
+        try {
+        FileOutputStream oos = new FileOutputStream(file);
+        byte[] buf = new byte[8192];
+        InputStream is = context.getContentResolver().openInputStream(uri);
+        int c = 0;
+        while ((c = is.read(buf, 0, buf.length)) > 0) {
+            oos.write(buf, 0, c);
+            oos.flush();
+        }
+        oos.close();
+        is.close();
+        } catch (Exception e) {
+        e.printStackTrace();
+        }
+        return file;
     }
 
 }
