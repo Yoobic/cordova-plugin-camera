@@ -381,7 +381,8 @@ public class FileHelper {
             // Fall back to writing to file if _data column does not exist
             final int index = cursor.getColumnIndex(MediaStore.MediaColumns.DATA);
             String path = index > -1 ? cursor.getString(index) : null;
-            if (path != null) {
+            boolean isAndroid10 = Build.VERSION.SDK_INT == 29;
+            if (path != null && !isAndroid10) {
             return cursor.getString(index);
             } else {
             final int indexDisplayName = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME);
